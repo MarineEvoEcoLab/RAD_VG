@@ -1,9 +1,42 @@
-# Evaluating benefits of variant graph workflows in RADseq analysis
+# Comparing genotype and estimating population statistics performance between linear-reference and variant-graph workflows in RADseq.
 
 **Working Directory:** `/project/pi_jpuritz_uri_edu/radinitio`
 
 ## [radinitio.sh](./radinitio.sh) workflow script
 
+### Introduction
+
+Despite advancements in generating genomic information it is still challenging to accurately classify genetic variation present, especially for complex regions. By considering population genetic variation at alignment and variant calling stages through graphical representation we can potentially reduce reference bias and improve detection of genetic variation. Using simulated restriction associated digest sequences from radinitio, we can better evaluate performance of variant graph to traditional linear-based methods. Provided a reference sequence, this software can create simulated RADseq, Run linear-based and variant-graph workflows, calculate genetic diversity and differientiation, and measure various workflow performance metrics. 
+
+### Objectives
+
+- Write simulated RADseq based on reference sequences using radinitio
+- Execute nf-core/radseq and Gabriel-A-Barrett/nf-vg-pipeline workflows with simulated individual RADseq in ${OUTDIR}/rad_reads based on reference and denovo methods. 
+- Calculate workflow genotyping performance: f1 score, precision, ect. with in-house python scripts
+- Measure population summary statistics fixation index (pFst), nucleotide diversity (pi), and extended haplotype homozygosity (ehh) using vcflib
+- Calculate summary stastic performance mean squared error and distribution of data. 
+
+### Prerequisites
+- Linux/5.4.0-159-generic
+- python/3.9.1
+- radinitio/1.1.1
+- nextflow/23.04.1.5866
+- apptainer/1.1.5+py3.8.12
+
+### Installation/Setup
+
+### Data
+- Provide a ready to use reference sequences for testing? 
+
+
+## Method Overview
+
+#### Parameters
+```
+radinitio.sh
+    argument $1: reference sequence
+    argument $2: effective population size for simulations
+```
 
 ### 1. Simulate Reads
 Provided a reference sequence radinitio.sh will create a directory based on the file name and simulate RADseq reads using [radinitio](https://catchenlab.life.illinois.edu/radinitio/) software.
@@ -88,43 +121,26 @@ nextflow run Gabriel-A-Barrett/nf-vg-pipeline --fasta ${GENOME} --fai "${REF_FAI
 
 Using pandas we can calculate true positives based on records found in both datasets, false positives based on records only found in only the model, and false negatives based on records only found in the reference using a pandas merge method.
 
-```python
-import sys
-import pandas as pd
 
-reference_input=sys.argv[1]
-model_input=sys.argv[2]
+### Results and Outputs
 
-# Load reference and model positions
-reference_positions = pd.read_csv(reference_input, sep='\t', names=['CHROM', 'POS'])
-model_positions = pd.read_csv(model_input, sep='\t', names=['CHROM', 'POS'])
+#### Examples
 
-# Merge dataframes on 'CHROM' and 'POS'
-merged = pd.merge(reference_positions, model_positions, on=['CHROM', 'POS'], how='outer', indicator=True)
+### Troubleshooting
 
-# Calculate accuracy metrics
-true_positives = (merged['_merge'] == 'both').sum()
-false_positives = (merged['_merge'] == 'right_only').sum()
-false_negatives = (merged['_merge'] == 'left_only').sum()
+### Contribution & Feedback
 
-print(f"true_positives: {true_positives:.2f}")
-print(f"false_negatives: {false_positives:.2f}")
+### Citations & Acknowledgments
 
-sensitivity = true_positives / (true_positives + false_negatives)
-precision = true_positives / (true_positives + false_positives)
-f1_score = 2 * (precision * sensitivity) / (precision + sensitivity)
+### License
 
+### Updates & Version History
 
-reference_positions['SCORE'] = reference_positions['CHROM'] + '_' + reference_positions['POS']
-model_positions['SCORE'] = model_positions['CHROM'] + '_' + model_positions['POS']
+### Contact Information
 
-print(f"Sensitivity: {sensitivity:.3f}")
-print(f"Precision: {precision:.3f}")
-print(f"F1 Score: {f1_score:.3f}"
-```
 
 ### TODO: How much parameter tweaking is enough 
 
-1. apply multiple filters and use the reference with the best sensitivity and precision metrics
-2. apply multiple parameters in denovo space and choose the best model performance. 
-3. Calculate percent Fst error between reference and compare metrics obtained in model
+1. Create a bash function that checks to see if the singularity images are downloaded
+1. output markdown dataframe describing genotype performance and population summary statistics
+2. 
