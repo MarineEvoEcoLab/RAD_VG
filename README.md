@@ -1,4 +1,4 @@
-# Comparing genotype and estimating population statistics performance between linear-reference and variant-graph workflows in RADseq.
+# Evaluating performance between linear-reference and variant-graph workflows to measuring population summary statistics wcFst, pi, and ehh using RADseq.
 
 **Working Directory:** `/project/pi_jpuritz_uri_edu/radinitio`
 
@@ -25,20 +25,77 @@ Despite advancements in generating genomic information it is still challenging t
 
 ### Installation/Setup
 
-### Data
-- Provide a ready to use reference sequences for testing? 
-
-
-## Method Overview
-
-#### Parameters
+To install software simply clone this repository onto your machine:
 ```
-radinitio.sh
+git clone <this repository>
+```
+
+Provide executable permissions to scripts:
+
+```
+chmod +x *.sh & chmod +x *.py
+```
+
+
+### Data
+- Example data is provided within `./atlantic_hsc/Lp_genome_Chr26.fasta`
+
+
+## Method Overview 
+
+#### **Parameters**
+```bash
+command: bash radinitio.sh ./atlantic_hsc/Lp_genome_Chr26.fasta 10000
     argument $1: reference sequence
     argument $2: effective population size for simulations
 ```
 
 ### 1. Simulate Reads
+
+#### 1.a modify radinitio to include and run simple_msp_stepping_stone_model in `__init__.py`
+
+```python
+#
+# Make msprime stepping stone models
+def simple_msp_stepping_stone_model(n_seq_indv, pop_eff_size, n_pops, mutation_rate=7e-8, pop_immigration_rate=0.001, growth_rate=0.0, rate=0.8):
+    # Msprime parameters
+    # Compute population sizes using list comprehension
+    population_sizes = [pop_eff_size * (rate ** i) for i in range(n_pops)]
+
+    pops = [
+        msprime.PopulationConfiguration(
+            sample_size = 2 * n_seq_indv,
+            initial_size = population_sizes[i],
+            growth_rate = growth_rate,)
+        for i in range(n_pops) 
+    ]
+    
+    msprime_simulate_args = {
+        'mutation_rate' : mutation_rate,
+        'population_configurations' : pops }
+    
+    # Create the migration matrix for stepping stone model.
+    if n_pops > 1:
+        migration_matrix = [ [0] * n_pops for _ in range(n_pops) ]
+        for j in range(n_pops):
+            if j > 0:
+                migration_matrix[j][j-1] = pop_immigration_rate
+            if j < n_pops - 1:
+                migration_matrix[j][j+1] = pop_immigration_rate
+        msprime_simulate_args['migration_matrix'] = migration_matrix # append to simulate args
+    
+    return msprime_simulate_args
+```
+
+and edited `__main__.py` to specify stepping stone model 
+
+```python
+# Define msprime population options
+msprime_simulate_args = ri.simple_msp_stepping_stone_model(args.n_seq_indv, args.pop_eff_size, args.n_pops)
+```
+
+#### 1.b Run radinitio
+
 Provided a reference sequence radinitio.sh will create a directory based on the file name and simulate RADseq reads using [radinitio](https://catchenlab.life.illinois.edu/radinitio/) software.
 
 ```bash
@@ -50,7 +107,7 @@ if [ ! -d "$OUTDIR" ] || [ -z "$(ls -A "$OUTDIR")" ]; then
         --genome $GENOME \
         --chromosomes $CHROMOSOME_LIST \
         --out-dir $OUTDIR \
-        --n-pops 4 --pop-eff-size 2500 --n-seq-indv 10 \
+        --n-pops 3 --pop-eff-size 2500 --n-seq-indv 30 \
         --library-type ddRAD --enz PstI --enz2 MspI \
         --insert-mean 350 --insert-stdev 35 \
         --pcr-cycles 9 --coverage 20 --read-length 150
@@ -90,12 +147,14 @@ paste -d',' <(for i in "${RAD_READS_DIR}"/*.1.fq.gz; do basename $i | cut -f1 -d
 
 ### 4. Run [radseq](https://github.com/Gabriel-A-Barrett/radseq) in reference and denovo mode
 
+**Reference**
 ```bash
 nextflow run Gabriel-A-Barrett/radseq -r dev --input "${RAD_READS_DIR}/$DIRNAME.csv" -c ~/config/unity.config --sequence_type 'PE'\
  --method 'reference' --genome $GENOME --outdir "${OUTDIR}/nf-radseq" -resume --save_reference_indices true
 ```
 
-Denovo: Additional parameters **minreaddepth_withinindividual** and **minreaddepth_betweenindividual**
+**Denovo**: Additional parameters **minreaddepth_withinindividual** and **minreaddepth_betweenindividual**
+
 ```bash
 nextflow run Gabriel-A-Barrett/radseq -r dev --input "${RAD_READS_DIR}/$DIRNAME.csv" -c ~/config/unity.config --sequence_type 'PE'\
  --method 'denovo' --outdir "${OUTDIR}/nf-radseq" -resume --save_reference_indices 'true'
@@ -120,6 +179,20 @@ nextflow run Gabriel-A-Barrett/nf-vg-pipeline --fasta ${GENOME} --fai "${REF_FAI
 ### 6. Calculate model sensitivity, precision, F1 score with [measureVcfAccuracy.py](measureVcfAccuracy.py)
 
 Using pandas we can calculate true positives based on records found in both datasets, false positives based on records only found in only the model, and false negatives based on records only found in the reference using a pandas merge method.
+
+### 7. Bash function `calculate_population_statistics` for measuring genome-wide Fst and sequence diversity
+
+1. remove duplicate variant sites
+2. fix genotype ploidy to ensure records are presented as diploid
+3. convert model vcf to bed
+4. subset reference vcf to regions within model bed file
+5. phase model genotypes ([beagle]())
+6. get the order of individuals in vcf header
+7. calculate population summary statistics
+
+```
+
+```
 
 
 ### Results and Outputs
