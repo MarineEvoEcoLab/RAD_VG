@@ -36,19 +36,31 @@ Provide executable permissions to scripts:
 chmod +x *.sh & chmod +x *.py
 ```
 
-
 ### Data
 - Example data is provided within `./atlantic_hsc/Lp_genome_Chr26.fasta`
 
 
 ## Method Overview 
-
 #### **Parameters**
 ```bash
-command: bash radinitio.sh ./atlantic_hsc/Lp_genome_Chr26.fasta 10000
-    argument $1: reference sequence
-    argument $2: effective population size for simulations
+command: bash radinitio.sh -g ./atlantic_hsc/Lp_genome_Chr26.fasta -n 2 -i 10 -o out 
+    -g | --genome : reference sequence
+    -n | --number_of_populations : number of simulated populations
+    -i | --number_of_individuals : number of simulated individuals per-population 
+    -o | --outdir : output directory
+    -h | --help : display help message
+     
 ```
+Quick overview: 
+1. Simulate reads
+2. Create a bed file with regions from file: `./ref_loci_vars/reference_rad_loci.fa.gz` headers
+3. Convert fa to fq files
+4. Write samplesheet for linear pipeline
+5. Run linear pipeline using `reference` method
+5. Run graph pipeline from linear output
+6. Scan the genome and calculate Fst, pi, ehh
+
+
 
 ### 1. Simulate Reads
 
@@ -87,7 +99,7 @@ def simple_msp_stepping_stone_model(n_seq_indv, pop_eff_size, n_pops, mutation_r
     return msprime_simulate_args
 ```
 
-and edited `__main__.py` to specify stepping stone model 
+and edited `__main__.py` to raise stepping stone model 
 
 ```python
 # Define msprime population options
@@ -136,6 +148,19 @@ for fa in "${RAD_READS_DIR}"/*.fa.gz; do
 done
 ```
 
+### 3. subset truth regions 
+
+```bash
+singularity exec ${SIF_DIR}/htslib%3A1.18--h81da01d_0 sh -c "bgzip -d -c $TRUTH_FASTA | grep '>' | cut -f 2 -d'=' | sed 's/[:-]/\t/g' > ${TRUTH_REGIONS}" # create bed file
+singularity exec ${SIF_DIR}/bcftools%3A1.17--haef29d1_0 bcftools view -Oz -o $TRUTH_BGZIP_VCF $TRUTH_VCF
+singularity exec ${SIF_DIR}/htslib%3A1.18--h81da01d_0 tabix -p vcf -f $TRUTH_BGZIP_VCF # write .tbi
+singularity exec ${SIF_DIR}/bcftools%3A1.17--haef29d1_0 bcftools view -R ${TRUTH_REGIONS} -Oz -o $TRUTH_SUB_VCF $TRUTH_BGZIP_VCF
+singularity exec ${SIF_DIR}/htslib%3A1.18--h81da01d_0 tabix -p vcf -f $TRUTH_SUB_VCF # write .tbi
+singularity exec ${SIF_DIR}/bcftools%3A1.17--haef29d1_0 bcftools norm -a -m -any -f $GENOME $TRUTH_SUB_VCF > $TRUTH_SUB_NORM_VCF
+singularity exec ${SIF_DIR}/bcftools%3A1.17--haef29d1_0 bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\n' $TRUTH_SUB_NORM_VCF > "${OUTDIR}/test_accuracy/ri-master_norm_dedup_rename_query.txt"
+```
+
+
 ### 3. write input samplesheet for nextflow workflow [radseq](https://github.com/Gabriel-A-Barrett/radseq)
 
 ```bash
@@ -146,6 +171,8 @@ paste -d',' <(for i in "${RAD_READS_DIR}"/*.1.fq.gz; do basename $i | cut -f1 -d
 ```
 
 ### 4. Run [radseq](https://github.com/Gabriel-A-Barrett/radseq) in reference and denovo mode
+
+expect pipelines are in your nextflow home bin folder
 
 **Reference**
 ```bash
@@ -160,60 +187,126 @@ nextflow run Gabriel-A-Barrett/radseq -r dev --input "${RAD_READS_DIR}/$DIRNAME.
  --method 'denovo' --outdir "${OUTDIR}/nf-radseq" -resume --save_reference_indices 'true'
 ```
 
-**Important** reference vcf from radinitio `${OUTDIR}/ref_loci_vars/ri_master.vcf.gz` is subsetted to regions found in merged alignment file from radseq.
+### 5. Build variant graph [vg_workflow](https://github.com/Gabriel-A-Barrett/nf-vg-pipeline) 
 
-```bash
-bcftools query -R $NF_RADSEQ_REFERENCE_BED -f '%CHROM\t%POS\n' $TRUTH_NORM_VCF > $OUTDIR/test_accuracy/ri_master_norm_nf_ref_chrom_pos.txt
-```
-
-
-### 5. Pass radseq vcf to [vg_workflow](https://github.com/Gabriel-A-Barrett/nf-vg-pipeline) 
-
-This workflow will construct a variant graph for alignment and genotyping.
+Uses [freebayes](https://github.com/freebayes/freebayes) and [vg pack](https://github.com/vgteam/vg) to call genotypes
 
 ```bash
 nextflow run Gabriel-A-Barrett/nf-vg-pipeline --fasta ${GENOME} --fai "${REF_FAI}"\
  --vcf "${REF_VCF}" --tbi "${REF_TBI}"\
  --fq "${FQ}" -resume --output_mode 'symlink' -c ~/config/unity.config --outdir "${OUTDIR}/vg"
 ```
-### 6. Calculate model sensitivity, precision, F1 score with [measureVcfAccuracy.py](measureVcfAccuracy.py)
+### 6. Evaluate model performance with [hap.py](https://github.com/Illumina/hap.py)
+```bash
+singularity exec ${SIF_DIR}/hap.py%3A0.3.15--py27hcb73b3d_0 hap.py <truth vcf> <model vcf> -r <reference fasta> -o <outdir>/test_accuracy/nf-<pipeline>-reference
+```
 
-Using pandas we can calculate true positives based on records found in both datasets, false positives based on records only found in only the model, and false negatives based on records only found in the reference using a pandas merge method.
+### 7. Measure genome-wide Fst, pi, and ehh with [vcflib]()
 
-### 7. Bash function `calculate_population_statistics` for measuring genome-wide Fst and sequence diversity
+```bash
+extract_population_indices_and_calculate() {
+    # Check if at least 3 arguments are provided
+    if [ "$#" -lt 3 ]; then
+        echo "Usage: extract_population_indices_and_calculate <path_to_vcf> <output_directory> <prefix> [ <number_of_populations> <number_of_individuals_per_population> ]"
+        exit 1
+    fi
 
-1. remove duplicate variant sites
-2. fix genotype ploidy to ensure records are presented as diploid
-3. convert model vcf to bed
-4. subset reference vcf to regions within model bed file
-5. phase model genotypes ([beagle]())
-6. get the order of individuals in vcf header
-7. calculate population summary statistics
+    VCF="$1"
+    OUTDIR="$2"
+    prefix="$3"
+    NUM_POPULATIONS="${4:-4}"
+    INDV_PER_POP="${5:-30}"
+
+    # Ensure the VCF file exists
+    if [ ! -f "${VCF}" ]; then
+        echo "VCF file not found!"
+        exit 1
+    fi
+
+    # Check if OUTDIR exists, if not create it
+    if [ ! -d "${OUTDIR}/gwas" ]; then
+        echo "Output directory does not exist. Creating it..."
+        mkdir -p "${OUTDIR}/gwas"
+    fi
+
+    # Get list of individuals with line numbers
+    singularity exec ${SIF_DIR}/bcftools%3A1.17--haef29d1_0 bcftools query -l "${VCF}" | awk -v OFS='\t' '{print NR, $0}' | sort -k2 > "${VCF}_INDVS"
+
+    # Extract individual names for each population and store in an array
+    declare -a pop_indices_array
+    for i in $(seq 1 $NUM_POPULATIONS); do
+        start=$((($i-1) * $INDV_PER_POP + 1))
+        end=$(($i * $INDV_PER_POP))
+        pop_names=$(awk -v start="$start" -v end="$end" 'NR < start || NR > end { next } { printf("%s%s", sep, $1); sep="," } END { printf("\n") }' "${VCF}_INDVS")
+        pop_indices_array[$i]="$pop_names"
+    done
+
+    # Run the command for every unique combination of populations, excluding self-comparisons
+    for i in $(seq 1 $NUM_POPULATIONS); do
+        for j in $(seq $i $NUM_POPULATIONS); do
+            if [ $i -eq $j ]; then
+                continue
+            fi
+            pops="pop${i}_vs_pop${j}"
+            echo "Processing combination: $pops"
+
+            if [ ! -f "$OUTDIR/${prefix}_${pops}_wcFst.txt" ]; then
+                singularity exec ${SIF_DIR}/vcflib%3A1.0.3--hecb563c_1 wcFst --target "${pop_indices_array[$i]}" --background "${pop_indices_array[$j]}" -y GT --file "${VCF}" > "$OUTDIR/gwas/${prefix}_${pops}_wcFst.txt"
+            else
+                echo "$OUTDIR/${prefix}_${pops}_wcFst.txt already exists. Skipping."
+            fi
+        done
+    done
 
 ```
 
+### Output Directory Structure
+
+- **test_accuracy** folder contains performance from *freebayes linear*, *freebayes graph alignment*, and *vg call*
+- Genome scan files from 3 variant callers get deposited into **gwas** folder
+
+
 ```
-
-
-### Results and Outputs
-
-#### Examples
-
-### Troubleshooting
-
-### Contribution & Feedback
-
-### Citations & Acknowledgments
-
-### License
-
-### Updates & Version History
-
-### Contact Information
-
-
-### TODO: How much parameter tweaking is enough 
-
-1. Create a bash function that checks to see if the singularity images are downloaded
-1. output markdown dataframe describing genotype performance and population summary statistics
-2. 
+├── {outdir}
+│   ├── {effpopsize}
+│   │   ├── {repetition}
+│   │   │   ├── gwas
+│   │   │   ├── msprime_vcfs
+│   │   │   ├── nf-radseq
+│   │   │   │   ├── fastp
+│   │   │   │   ├── fastqc
+│   │   │   │   ├── pipeline_info
+│   │   │   │   └── reference
+│   │   │   │       ├── bwa-mem2
+│   │   │   │       │   ├── intervals
+│   │   │   │       │   │   ├── bedops_merge
+│   │   │   │       │   │   ├── bedtools_bamtobed
+│   │   │   │       │   │   └── bedtools_makewindows
+│   │   │   │       │   ├── samtools_index
+│   │   │   │       │   ├── samtools_merge
+│   │   │   │       │   └── samtools_stats
+│   │   │   │       ├── multiqc
+│   │   │   │       │   └── multiqc_data
+│   │   │   │       ├── reference
+│   │   │   │       │   └── bwa-mem2
+│   │   │   │       │       └── index
+│   │   │   │       ├── samtools
+│   │   │   │       │   └── index
+│   │   │   │       └── variant_calling
+│   │   │   │           ├── filter
+│   │   │   │           └── intervals
+│   │   │   ├── rad_alleles
+│   │   │   ├── rad_reads
+│   │   │   ├── ref_loci_vars
+│   │   │   ├── test_accuracy
+│   │   │   └── vg
+│   │   │       └── reference
+│   │   │           ├── BCFTOOLS
+│   │   │           │   └── MERGE
+│   │   │           ├── STATS
+│   │   │           ├── TABIX
+│   │   │           │   └── TABIX
+│   │   │           └── VG
+│   │   │               └── PATH
+|   |   |
+```
