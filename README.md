@@ -8,13 +8,13 @@
 
 Despite advancements in generating genomic information it is still challenging to accurately classify genetic variation present, especially for complex regions. By considering population genetic variation at alignment and variant calling stages through graphical representation we can potentially reduce reference bias and improve detection of genetic variation. Using simulated restriction associated digest sequences from radinitio, we can better evaluate performance of variant graph to traditional linear-based methods. Provided a reference sequence, this software can create simulated RADseq, Run linear-based and variant-graph workflows, calculate genetic diversity and differientiation, and measure various workflow performance metrics. 
 
-### Objectives
+### Steps
 
 - Write simulated RADseq based on reference sequences using radinitio
 - Execute nf-core/radseq and Gabriel-A-Barrett/nf-vg-pipeline workflows with simulated individual RADseq in ${OUTDIR}/rad_reads based on reference and denovo methods. 
-- Calculate workflow genotyping performance: f1 score, precision, ect. with in-house python scripts
-- Measure population summary statistics fixation index (pFst), nucleotide diversity (pi), and extended haplotype homozygosity (ehh) using vcflib
-- Calculate summary stastic performance mean squared error and distribution of data. 
+- Calculate workflow genotyping performance with hap.py
+- Measure population summary statistics fixation index (pFst), nucleotide diversity (pi), and extended haplotype homozygosity (ehh) with vcflib
+- Calculate summary statistics and visualize
 
 ### Prerequisites
 - Linux/5.4.0-159-generic
