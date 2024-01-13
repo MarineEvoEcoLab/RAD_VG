@@ -199,7 +199,7 @@ full_simulations_workflows() {
     singularity exec ${SIF_DIR}/htslib%3A1.18--h81da01d_0 sh -c "bgzip -d -c $TRUTH_FASTA | grep '>' | cut -f 2 -d'=' | sed 's/[:-]/\t/g' | mawk '{x=$2+5;y=$3-5; print $1"\t"x"\t"y}' > ${TRUTH_REGIONS}" # create bed file
     singularity exec ${SIF_DIR}/bcftools%3A1.17--haef29d1_0 bcftools view -Oz -o $TRUTH_BGZIP_VCF $TRUTH_VCF
     singularity exec ${SIF_DIR}/htslib%3A1.18--h81da01d_0 tabix -p vcf -f $TRUTH_BGZIP_VCF # write .tbi
-    singularity exec ${SIF_DIR}/bcftools%3A1.17--haef29d1_0 bcftools view -R ${TRUTH_REGIONS} -Oz -o $TRUTH_SUB_VCF $TRUTH_BGZIP_VCF
+    singularity exec ${SIF_DIR}/bcftools%3A1.17--haef29d1_0 bcftools view -R ${TRUTH_REGIONS} -Ov  $TRUTH_BGZIP_VCF | vcftools --vcf - --mac 3 --recode --recode-INFO-all --stdout| bcftools view -Ov -o $TRUTH_SUB_VCF #You need to match the default filterinf in RADSeq 
     singularity exec ${SIF_DIR}/htslib%3A1.18--h81da01d_0 tabix -p vcf -f $TRUTH_SUB_VCF # write .tbi
     singularity exec ${SIF_DIR}/bcftools%3A1.17--haef29d1_0 bcftools norm -a -m -any -f $GENOME $TRUTH_SUB_VCF > $TRUTH_SUB_NORM_VCF
     singularity exec ${SIF_DIR}/bcftools%3A1.17--haef29d1_0 bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\n' $TRUTH_SUB_NORM_VCF > "${OUTDIR}/test_accuracy/ri-master_norm_dedup_rename_query.txt"
